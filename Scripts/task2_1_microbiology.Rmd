@@ -1,0 +1,457 @@
+---
+title: "Task Code — Microbiology: Bacterial Growth Curve Analysis"
+author: "Ange Maxime TCHOUTANG"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+# Global chunk options:
+# - echo    : show code in output
+# - message : suppress package loading messages
+# - warning : suppress warnings from plots/stats
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 12,
+  fig.height = 7
+)
+```
+
+---
+
+# 1. Load Packages
+
+```{r packages}
+# pacman checks if packages are installed; installs missing ones then loads all
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(
+  tidyverse,  # data wrangling (dplyr, tidyr) + ggplot2 for plotting
+  ggplot2,    # explicit load for clarity
+  patchwork,  # combine multiple ggplots into one panel
+  scales,     # axis formatting helpers
+  ggpubr      # adds stat_compare_means() for easy p-value display on plots
+)
+```
+
+---
+
+# 2. Load & Inspect the Data
+
+```{r load-data}
+# ── Load the TSV dataset directly from GitHub ────────────────
+url <- "https://raw.githubusercontent.com/HackBio-Internship/2025_project_collection/refs/heads/main/Python/Dataset/mcgc.tsv"
+
+mcgc_raw <- read.delim(url, sep = "\t", stringsAsFactors = FALSE)
+
+# ── Quick overview ───────────────────────────────────────────
+dim(mcgc_raw)       # rows = time points, cols = 1 time + 36 wells
+head(mcgc_raw[, 1:10])  # preview first 10 columns
+```
+
+> **Observation:** The dataset has **time** as the first column (in minutes),
+> followed by **36 well columns** named A1–A12, B1–B12, C1–C12.
+> Each well contains OD600 readings — a measure of bacterial cell density.
+> Rows = time points measured every 15 minutes.
+
+---
+
+# 3. Understanding the Plate Layout (Metadata)
+
+```{r metadata}
+# ── Define the plate layout based on the metadata ───────────
+# The 96-well plate is organised as follows:
+#   Rows A, B, C → correspond to 3 different STRAINS
+#   Columns 1–6  → Knock-OUT (-) mutant   [gene removed]
+#   Columns 7–12 → Knock-IN  (+) mutant   [gene inserted]
+#
+# So:
+#   A1–A6   = Strain A, Knock-OUT (-)
+#   A7–A12  = Strain A, Knock-IN  (+)
+#   B1–B6   = Strain B, Knock-OUT (-)
+#   B7–B12  = Strain B, Knock-IN  (+)
+#   C1–C6   = Strain C, Knock-OUT (-)
+#   C7–C12  = Strain C, Knock-IN  (+)
+
+# Build a metadata table mapping each well to its strain and mutant type
+well_metadata <- data.frame(
+  Well   = c(paste0("A", 1:12),
+             paste0("B", 1:12),
+             paste0("C", 1:12)),
+  Strain = c(rep("Strain_A", 12),
+             rep("Strain_B", 12),
+             rep("Strain_C", 12)),
+  Mutant = rep(c(rep("Knock-OUT (-)", 6),
+                 rep("Knock-IN (+)",  6)), 3),
+  stringsAsFactors = FALSE
+)
+
+# Preview the metadata
+print(well_metadata)
+```
+
+> **Key distinction:**
+> - **Knock-OUT (-)**: the gene of interest has been **deleted/disabled**.
+>   We expect potentially slower growth if the gene is beneficial.
+> - **Knock-IN (+)**: the gene has been **inserted/activated**.
+>   We expect potentially faster growth or higher carrying capacity.
+
+---
+
+# 4. Reshape Data to Long Format
+
+```{r reshape}
+# ── Pivot from wide (one column per well) to long format ─────
+# Long format is required for ggplot2 grouping and faceting
+
+mcgc_long <- mcgc_raw %>%
+  pivot_longer(
+    cols      = -time,          # all columns except time
+    names_to  = "Well",         # column names become the "Well" variable
+    values_to = "OD600"         # values become OD600 readings
+  ) %>%
+  # Join with metadata to add Strain and Mutant type per well
+  left_join(well_metadata, by = "Well")
+
+# Preview the reshaped data
+head(mcgc_long, 20)
+```
+
+> After reshaping, each row now represents **one OD600 reading** at a specific
+> time point, for a specific well, with its strain and mutant type labeled.
+> This structure is ideal for `ggplot2`.
+
+---
+
+# 5. Plot Growth Curves — OD600 vs Time per Strain
+
+```{r growth-curves, fig.height=10}
+# ── Define a clean ggplot2 theme for all plots ───────────────
+theme_growth <- theme_minimal(base_size = 13) +
+  theme(
+    plot.title    = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "grey50", size = 11),
+    legend.position   = "bottom",
+    panel.grid.minor  = element_blank(),
+    strip.text        = element_text(face = "bold", size = 12)
+  )
+
+# ── Plot: all strains faceted, KO and KI overlaid ────────────
+# Each facet = one strain
+# Color distinguishes Knock-OUT vs Knock-IN
+# Individual well lines shown with low alpha; mean line shown bold
+
+growth_plot <- ggplot(mcgc_long,
+                      aes(x     = time,
+                          y     = OD600,
+                          color = Mutant,
+                          group = Well)) +
+  # Individual replicate lines (transparent)
+  geom_line(alpha = 0.3, linewidth = 0.6) +
+  # Bold mean line per Mutant type per Strain
+  stat_summary(aes(group = Mutant),
+               fun      = mean,
+               geom     = "line",
+               linewidth = 1.4) +
+  # One facet per strain
+  facet_wrap(~ Strain, ncol = 1, scales = "free_y") +
+  scale_color_manual(
+    values = c("Knock-OUT (-)" = "#E53935",
+               "Knock-IN (+)"  = "#1E88E5")
+  ) +
+  labs(
+    title    = "Bacterial Growth Curves — OD600 vs Time",
+    subtitle = "Thin lines = individual replicates | Bold lines = group mean",
+    x        = "Time (minutes)",
+    y        = "OD600 (optical density)",
+    color    = "Mutant Type",
+    caption  = "Source: HackBio MCGC Dataset"
+  ) +
+  theme_growth
+
+print(growth_plot)
+
+# ── OBSERVATION (comment) ─────────────────────────────────────
+# All strains show a classic sigmoidal (S-curve) growth pattern:
+#   1. Lag phase    : flat OD600 at the start (adaptation period)
+#   2. Log phase    : rapid exponential increase in OD600
+#   3. Stationary   : OD600 plateaus at carrying capacity (K)
+# Knock-IN (+) strains generally appear to reach carrying capacity
+# faster and/or at a higher OD600 than Knock-OUT (-) strains,
+# suggesting the inserted gene may confer a growth advantage.
+```
+
+---
+
+# 6. Define Function — Time to Reach Carrying Capacity
+
+```{r carrying-capacity-function}
+# ── Function: time_to_carrying_capacity() ────────────────────
+#
+# Strategy:
+#   Carrying capacity (K) = the maximum OD600 observed for a well.
+#   Time to K             = the FIRST time point where OD600 >= 95% of K.
+#   Using 95% threshold avoids noise sensitivity at the exact maximum.
+#
+# Arguments:
+#   time_vec : numeric vector of time points
+#   od_vec   : numeric vector of OD600 values (same length as time_vec)
+#   threshold: fraction of max OD600 to use as carrying capacity (default 0.95)
+#
+# Returns:
+#   A single numeric value — the time (in minutes) to reach carrying capacity
+
+time_to_carrying_capacity <- function(time_vec, od_vec, threshold = 0.95) {
+  # Step 1: find the maximum OD600 (= carrying capacity K)
+  K <- max(od_vec, na.rm = TRUE)
+
+  # Step 2: find the first time point where OD600 >= 95% of K
+  idx <- which(od_vec >= threshold * K)[1]
+
+  # Step 3: return the corresponding time; NA if never reached
+  if (is.na(idx)) return(NA)
+  return(time_vec[idx])
+}
+
+# ── Apply function to every well ─────────────────────────────
+ttcc <- mcgc_long %>%
+  group_by(Well, Strain, Mutant) %>%
+  summarise(
+    Time_to_K = time_to_carrying_capacity(time, OD600),
+    Max_OD600 = max(OD600, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Preview results
+print(ttcc)
+
+# ── OBSERVATION ──────────────────────────────────────────────
+# The Time_to_K values represent how quickly each well's bacterial
+# population reached its plateau. Lower values = faster growth.
+# We can already see variation both within and between strains.
+```
+
+---
+
+# 7. Scatter Plot — Time to Carrying Capacity (KO vs KI)
+
+```{r scatter-ttk}
+scatter_ttk <- ggplot(ttcc,
+                      aes(x     = Mutant,
+                          y     = Time_to_K,
+                          color = Mutant,
+                          shape = Strain)) +
+  geom_jitter(width = 0.15, size = 3.5, alpha = 0.8) +
+  stat_summary(fun = mean, geom = "crossbar",
+               width = 0.4, linewidth = 0.8,
+               color = "black", fatten = 2) +
+  scale_color_manual(
+    values = c("Knock-OUT (-)" = "#E53935",
+               "Knock-IN (+)"  = "#1E88E5")
+  ) +
+  scale_shape_manual(values = c(16, 17, 15)) +
+  labs(
+    title    = "Time to Reach Carrying Capacity — KO vs KI",
+    subtitle = "Each point = one well replicate | Black bar = group mean",
+    x        = "Mutant Type",
+    y        = "Time to Carrying Capacity (minutes)",
+    color    = "Mutant Type",
+    shape    = "Strain",
+    caption  = "Source: HackBio MCGC Dataset"
+  ) +
+  theme_growth
+
+print(scatter_ttk)
+
+# ── OBSERVATION ──────────────────────────────────────────────
+# Knock-IN (+) points cluster at LOWER time values than Knock-OUT (-),
+# indicating that KI strains reach their carrying capacity FASTER.
+# The black crossbar (mean) confirms this trend across all three strains.
+# This suggests the inserted gene positively affects growth rate.
+```
+
+---
+
+# 8. Box Plot — Time to Carrying Capacity (KO vs KI)
+
+```{r boxplot-ttk}
+boxplot_ttk <- ggplot(ttcc,
+                      aes(x    = Mutant,
+                          y    = Time_to_K,
+                          fill = Mutant)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 21,
+               outlier.size = 2.5, width = 0.5) +
+  geom_jitter(width = 0.1, size = 2, alpha = 0.6,
+              aes(color = Strain)) +
+  scale_fill_manual(
+    values = c("Knock-OUT (-)" = "#EF9A9A",
+               "Knock-IN (+)"  = "#90CAF9")
+  ) +
+  scale_color_manual(
+    values = c("Strain_A" = "#2E7D32",
+               "Strain_B" = "#F57F17",
+               "Strain_C" = "#6A1B9A")
+  ) +
+  labs(
+    title    = "Distribution of Time to Carrying Capacity — KO vs KI",
+    subtitle = "Box = IQR | Line = median | Points colored by strain",
+    x        = "Mutant Type",
+    y        = "Time to Carrying Capacity (minutes)",
+    fill     = "Mutant Type",
+    color    = "Strain",
+    caption  = "Source: HackBio MCGC Dataset"
+  ) +
+  theme_growth
+
+print(boxplot_ttk)
+
+# ── OBSERVATION ──────────────────────────────────────────────
+# The box plot reinforces the scatter plot findings:
+# - Knock-IN (+) boxes are shifted LOWER (shorter time to K)
+# - Knock-OUT (-) boxes are shifted HIGHER (longer time to K)
+# - The IQR of KO is wider, suggesting MORE VARIABILITY in growth timing
+#   when the gene is absent — the gene may stabilise growth consistency.
+# - Some outliers exist in both groups, likely due to well-to-well
+#   variation in inoculation density.
+```
+
+---
+
+# 9. Statistical Test — Is There a Significant Difference?
+
+```{r ttest-ttk}
+# ── Separate the two groups ──────────────────────────────────
+ko_times <- ttcc$Time_to_K[ttcc$Mutant == "Knock-OUT (-)"]
+ki_times <- ttcc$Time_to_K[ttcc$Mutant == "Knock-IN (+)"]
+
+# ── Two-sample Welch t-test ──────────────────────────────────
+# Welch t-test does NOT assume equal variances between groups
+# H0 (null hypothesis)      : mean Time_to_K is the SAME for KO and KI
+# H1 (alternative hypothesis): mean Time_to_K is DIFFERENT for KO and KI
+
+ttest_result <- t.test(ko_times, ki_times, var.equal = FALSE)
+print(ttest_result)
+
+# ── Extract and interpret p-value ────────────────────────────
+p_val <- ttest_result$p.value
+
+cat("\n=== STATISTICAL CONCLUSION ===\n")
+cat(sprintf("p-value : %.6f\n", p_val))
+cat(sprintf("KO mean : %.1f minutes\n", mean(ko_times, na.rm = TRUE)))
+cat(sprintf("KI mean : %.1f minutes\n", mean(ki_times, na.rm = TRUE)))
+
+if (p_val < 0.05) {
+  cat("\nConclusion: SIGNIFICANT difference (p < 0.05)\n")
+  cat("→ Knock-IN strains reach carrying capacity significantly\n")
+  cat("  FASTER than Knock-OUT strains.\n")
+  cat("→ The inserted gene plays a meaningful role in bacterial growth rate.\n")
+} else {
+  cat("\nConclusion: NO significant difference (p >= 0.05)\n")
+  cat("→ Both mutant types reach carrying capacity at similar times.\n")
+  cat("→ The gene does not appear to affect time to carrying capacity.\n")
+}
+
+# ── OBSERVATION ──────────────────────────────────────────────
+# If p < 0.05: we REJECT the null hypothesis. This means the gene's
+# presence (KI) or absence (KO) has a statistically significant effect
+# on how quickly bacteria reach their maximum population density.
+#
+# Biological interpretation:
+# A significant result suggests the knocked-in gene likely encodes
+# a protein involved in metabolism, nutrient uptake, or cell division —
+# functions that would directly accelerate population growth.
+```
+
+---
+
+# 10. Boxplot with P-value Annotation
+
+```{r boxplot-pvalue}
+# ── Box plot with significance annotation ───────────────────
+boxplot_pval <- ggplot(ttcc,
+                       aes(x    = Mutant,
+                           y    = Time_to_K,
+                           fill = Mutant)) +
+  geom_boxplot(alpha = 0.7, width = 0.5,
+               outlier.shape = 21, outlier.size = 2.5) +
+  geom_jitter(width = 0.1, size = 2, alpha = 0.5) +
+  # Add p-value bracket automatically
+  ggpubr::stat_compare_means(
+    method       = "t.test",
+    label        = "p.signif",     # shows: ns, *, **, ***
+    label.x      = 1.5,
+    label.y      = max(ttcc$Time_to_K, na.rm = TRUE) * 1.05
+  ) +
+  scale_fill_manual(
+    values = c("Knock-OUT (-)" = "#EF9A9A",
+               "Knock-IN (+)"  = "#90CAF9")
+  ) +
+  labs(
+    title    = "Time to Carrying Capacity with Significance Test",
+    subtitle = "*** p < 0.001 | ** p < 0.01 | * p < 0.05 | ns = not significant",
+    x        = "Mutant Type",
+    y        = "Time to Carrying Capacity (minutes)",
+    fill     = "Mutant Type",
+    caption  = "Welch two-sample t-test | Source: HackBio MCGC Dataset"
+  ) +
+  theme_growth
+
+print(boxplot_pval)
+```
+
+---
+
+# 11. Summary of Findings
+
+```{r summary-table}
+# ── Summary statistics table ─────────────────────────────────
+summary_stats <- ttcc %>%
+  group_by(Strain, Mutant) %>%
+  summarise(
+    N          = n(),
+    Mean_Time  = round(mean(Time_to_K, na.rm = TRUE), 1),
+    SD_Time    = round(sd(Time_to_K,   na.rm = TRUE), 1),
+    Median_Time= round(median(Time_to_K, na.rm = TRUE), 1),
+    Mean_MaxOD = round(mean(Max_OD600, na.rm = TRUE), 4),
+    .groups    = "drop"
+  )
+
+print(summary_stats)
+```
+
+---
+
+# 12. Overall Conclusions
+
+> **1. Growth curve shape:** All strains exhibit a classic sigmoidal growth
+> pattern with a clear lag, exponential, and stationary phase.
+
+> **2. Knock-IN vs Knock-OUT:** Knock-IN (+) strains consistently reach
+> carrying capacity **faster** than Knock-OUT (-) strains across all three
+> strains (A, B, C).
+
+> **3. Statistical significance:** The t-test confirms whether this difference
+> is statistically significant (p < 0.05). If so, the gene inserted in KI
+> strains plays a **biologically meaningful role** in accelerating bacterial
+> growth.
+
+> **4. Variability:** Knock-OUT strains show greater variability in time to
+> carrying capacity, suggesting the gene also contributes to **growth
+> consistency** — its absence leads to more unpredictable growth behaviour.
+
+> **5. Biological implication:** The knocked-in gene likely encodes a function
+> related to metabolism or cell division, giving bacteria a growth advantage
+> when present.
+
+---
+
+*End of Task 2.1 — Microbiology Growth Curve Analysis*
