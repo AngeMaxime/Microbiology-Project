@@ -1,15 +1,26 @@
 ---
-title: "Task Code — Microbiology: Bacterial Growth Curve Analysis"
+title: 'Task Code — Microbiology: Bacterial Growth Curve Analysis'
 author: "Ange Maxime TCHOUTANG"
 date: "`r Sys.Date()`"
 output:
+  word_document:
+    toc: true
+    toc_depth: '3'
   html_document:
     toc: true
     toc_float: true
+    toc_depth: 3
+    fig_caption: true
     theme: flatly
     highlight: tango
     code_folding: show
     number_sections: true
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+editor_options:
+  markdown:
+    wrap: 72
 ---
 
 ```{r setup, include=FALSE}
@@ -53,6 +64,10 @@ url <- "https://raw.githubusercontent.com/HackBio-Internship/2025_project_collec
 
 mcgc_raw <- read.delim(url, sep = "\t", stringsAsFactors = FALSE)
 
+# save the data locally
+
+write.csv(mcgc_raw, "Raw_data_microbiology.csv", row.names = FALSE)
+
 # ── Quick overview ───────────────────────────────────────────
 dim(mcgc_raw)       # rows = time points, cols = 1 time + 36 wells
 head(mcgc_raw[, 1:10])  # preview first 10 columns
@@ -95,6 +110,10 @@ well_metadata <- data.frame(
   stringsAsFactors = FALSE
 )
 
+# save metadata
+
+write.csv(well_metadata, "Meta_data.csv", row.names = FALSE)
+
 # Preview the metadata
 print(well_metadata)
 ```
@@ -121,6 +140,10 @@ mcgc_long <- mcgc_raw %>%
   ) %>%
   # Join with metadata to add Strain and Mutant type per well
   left_join(well_metadata, by = "Well")
+
+# save the long format type
+
+write.csv(mcgc_long, "Long_format.csv", row.names = FALSE)
 
 # Preview the reshaped data
 head(mcgc_long, 20)
@@ -179,6 +202,8 @@ growth_plot <- ggplot(mcgc_long,
   theme_growth
 
 print(growth_plot)
+
+ggsave("growth_plot.png", growth_plot, width = 7, height = 6, dpi = 300, bg = "white")
 
 # ── OBSERVATION (comment) ─────────────────────────────────────
 # All strains show a classic sigmoidal (S-curve) growth pattern:
@@ -272,6 +297,8 @@ scatter_ttk <- ggplot(ttcc,
 
 print(scatter_ttk)
 
+ggsave("Scatter.png", scatter_ttk, width = 7, height = 6, dpi = 300, bg = "white")
+
 # ── OBSERVATION ──────────────────────────────────────────────
 # Knock-IN (+) points cluster at LOWER time values than Knock-OUT (-),
 # indicating that KI strains reach their carrying capacity FASTER.
@@ -313,6 +340,8 @@ boxplot_ttk <- ggplot(ttcc,
   theme_growth
 
 print(boxplot_ttk)
+
+ggsave("boxplot.png", boxplot_ttk, width = 7, height = 6, dpi = 300, bg = "white")
 
 # ── OBSERVATION ──────────────────────────────────────────────
 # The box plot reinforces the scatter plot findings:
@@ -406,6 +435,8 @@ boxplot_pval <- ggplot(ttcc,
   theme_growth
 
 print(boxplot_pval)
+
+ggsave("boxplot_pval.png", boxplot_pval, width = 7, height = 6, dpi = 300, bg = "white")
 ```
 
 ---
@@ -454,4 +485,4 @@ print(summary_stats)
 
 ---
 
-*End of Task 2.1 — Microbiology Growth Curve Analysis*
+*End of Task — Microbiology Growth Curve Analysis*
